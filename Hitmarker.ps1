@@ -10,16 +10,29 @@ using System.Runtime.InteropServices;
 using System.Collections.Generic;
 
 public class GrenadeEffect : Form {
+    [StructLayout(LayoutKind.Sequential)] struct Blend { public byte Operation, Flags, Alpha, Format; }
+    [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr window);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr window, IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr value);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr value);
+    [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+    [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr window, IntPtr dst, ref Point pos, ref Size size, IntPtr src, ref Point origin, int key, ref Blend blend, int flags);
     readonly Timer animation = new Timer();
     readonly DateTime started = DateTime.UtcNow;
     readonly Point target;
     readonly bool flash;
+    readonly System.Windows.Media.MediaPlayer throwSound = new System.Windows.Media.MediaPlayer();
+    readonly System.Windows.Media.MediaPlayer burstSound = new System.Windows.Media.MediaPlayer();
+    readonly Bitmap frame;
+    bool detonated;
     public bool IsFlash { get { return flash; } }
+    public const double Fuse = 0.85;
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
         get { var p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80; return p; }
     }
-    public GrenadeEffect(Rectangle monitor, Point click, bool isFlash) {
+    public GrenadeEffect(Rectangle monitor, Point click, bool isFlash, string audioDirectory) {
         flash = isFlash;
         target = new Point(click.X - monitor.Left, click.Y - monitor.Top);
         FormBorderStyle = FormBorderStyle.None;
@@ -27,50 +40,101 @@ public class GrenadeEffect : Form {
         Bounds = monitor;
         ShowInTaskbar = false;
         TopMost = true;
-        BackColor = Color.Magenta;
-        TransparencyKey = Color.Magenta;
-        DoubleBuffered = true;
-        Opacity = 0.7;
-        animation.Interval = 16;
+        frame = new Bitmap(monitor.Width, monitor.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        throwSound.Volume = 0.45;
+        burstSound.Volume = flash ? 0.4 : 0.55;
+        throwSound.Open(new Uri(System.IO.Path.Combine(audioDirectory, "csgo-throw.mp3")));
+        burstSound.Open(new Uri(System.IO.Path.Combine(audioDirectory, flash ? "csgo-flashbang.mp3" : "csgo-smoke.mp3")));
+        Shown += delegate { throwSound.Play(); Present(0); };
+        animation.Interval = 33;
         animation.Tick += delegate {
             double age = (DateTime.UtcNow - started).TotalSeconds;
-            double lifetime = flash ? 1.7 : 5.0;
-            if (age >= lifetime) { Close(); return; }
-            if (age >= 0.45) {
-                double remaining = (lifetime - age) / (lifetime - 0.45);
-                Opacity = flash ? 0.45 * remaining * remaining : 0.7 * Math.Min(1, remaining * 3);
-            }
-            Invalidate();
+            if (age >= (flash ? 4.0 : 9.0)) { Close(); return; }
+            if (age >= Fuse && !detonated) { detonated = true; burstSound.Play(); }
+            Present(age);
         };
         animation.Start();
     }
-    protected override void OnPaint(PaintEventArgs e) {
-        base.OnPaint(e);
-        double age = (DateTime.UtcNow - started).TotalSeconds;
-        if (age < 0.45) {
-            double progress = age / 0.45;
-            int x = (int)(ClientSize.Width / 2 + (target.X - ClientSize.Width / 2) * progress);
-            int y = (int)(ClientSize.Height + (target.Y - ClientSize.Height) * progress - Math.Sin(progress * Math.PI) * 140);
-            using (var brush = new SolidBrush(flash ? Color.Bisque : Color.OliveDrab)) e.Graphics.FillEllipse(brush, x-7, y-10, 14, 20);
+    void Present(double age) {
+        using (var g = Graphics.FromImage(frame)) {
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+            g.Clear(Color.Transparent);
+            g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceOver;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            DrawEffect(g, age);
+        }
+        IntPtr screen = GetDC(IntPtr.Zero), memory = CreateCompatibleDC(screen);
+        IntPtr bitmap = frame.GetHbitmap(Color.FromArgb(0));
+        IntPtr old = SelectObject(memory, bitmap);
+        try {
+            Point pos = Location, origin = Point.Empty;
+            Size size = frame.Size;
+            var blend = new Blend { Operation = 0, Alpha = 255, Format = 1 };
+            UpdateLayeredWindow(Handle, screen, ref pos, ref size, memory, ref origin, 0, ref blend, 2);
+        } finally { SelectObject(memory, old); DeleteObject(bitmap); DeleteDC(memory); ReleaseDC(IntPtr.Zero, screen); }
+    }
+    void DrawCanister(Graphics g, float x, float y, float angle) {
+        var state = g.Save();
+        g.TranslateTransform(x, y);
+        g.RotateTransform(angle);
+        var body = new Rectangle(-8, -17, 16, 34);
+        using (var metal = new System.Drawing.Drawing2D.LinearGradientBrush(body, Color.FromArgb(65,69,64), Color.FromArgb(190,193,181), 0f)) g.FillRectangle(metal, body);
+        using (var stripe = new SolidBrush(flash ? Color.FromArgb(190,178,137) : Color.FromArgb(54,85,51))) g.FillRectangle(stripe, -8, -5, 16, 10);
+        using (var edge = new Pen(Color.FromArgb(45,48,43), 2)) {
+            g.DrawRectangle(edge, body);
+            g.DrawLine(edge, -8, -12, 8, -12);
+            g.DrawLine(edge, -8, 12, 8, 12);
+        }
+        g.FillRectangle(Brushes.DimGray, -5, -22, 10, 5);
+        using (var pin = new Pen(Color.Silver, 2)) { g.DrawEllipse(pin, 3, -27, 10, 10); g.DrawLine(pin, -6, -21, 11, -13); }
+        g.Restore(state);
+    }
+    void DrawEffect(Graphics g, double age) {
+        if (age < Fuse) {
+            double t = Math.Min(1, age / 0.65);
+            float x = (float)(ClientSize.Width * 0.65 + (target.X - ClientSize.Width * 0.65) * t);
+            float y = (float)(ClientSize.Height + 25 + (target.Y - ClientSize.Height - 25) * t - Math.Sin(t * Math.PI) * 190);
+            if (age > 0.65) y -= (float)(Math.Sin((age-0.65)/0.2*Math.PI)*24);
+            DrawCanister(g, x, y, (float)(t*490));
             return;
         }
-        if (flash) { e.Graphics.Clear(Color.FromArgb(255, 246, 220)); return; }
-        double expansion = Math.Min(1, (age - 0.45) / 0.65);
-        for (int i = 0; i < 22; i++) {
-            double angle = i * 2.39996;
-            double distance = Math.Sqrt(i / 22.0) * 120 * expansion;
-            int size = (int)(95 + 35 * expansion + Math.Sin(age * 2 + i) * 8);
-            int x = target.X + (int)(Math.Cos(angle) * distance);
-            int y = target.Y + (int)(Math.Sin(angle) * distance - (age - 0.45) * 10);
-            int shade = 100 + (i * 17) % 60;
-            using (var brush = new SolidBrush(Color.FromArgb(shade, shade, shade))) e.Graphics.FillEllipse(brush, x-size/2, y-size/2, size, size);
+        double elapsed = age - Fuse;
+        if (flash) {
+            // One continuous bloom, short hold, then gradual recovery.
+            double strength = elapsed < 0.08 ? elapsed/0.08 : elapsed < 0.25 ? 1 : Math.Exp(-(elapsed-0.25)*1.6);
+            using (var wash = new SolidBrush(Color.FromArgb((int)(215*strength), 250,250,245))) g.FillRectangle(wash, ClientRectangle);
+            Glow(g, target.X, target.Y, 200+(float)(elapsed*80), (int)(30*strength), 255);
+            return;
+        }
+        double expansion = 1-Math.Exp(-elapsed*2.2);
+        double fade = Math.Min(1, (9.0-age)/2.5);
+        double density = Math.Min(1, elapsed*2) * Math.Max(0,fade);
+        for (int i=0; i<64; i++) {
+            double angle = i*2.399963;
+            double distance = Math.Sqrt((i+0.5)/64.0)*165*expansion;
+            float x = target.X+(float)(Math.Cos(angle)*distance+Math.Sin(elapsed*0.7+i)*12*expansion);
+            float y = target.Y+(float)(Math.Sin(angle)*distance*0.72-elapsed*8+Math.Cos(i+elapsed)*7);
+            float radius = (float)((65+(i*13)%45)*(.3+.7*expansion));
+            int shade = 112+(i*19)%58;
+            Glow(g,x,y,radius,(int)((42+(i%5)*6)*density),shade);
+        }
+    }
+    static void Glow(Graphics g, float x, float y, float radius, int alpha, int shade) {
+        using (var path = new System.Drawing.Drawing2D.GraphicsPath()) {
+            path.AddEllipse(x-radius,y-radius,radius*2,radius*2);
+            using (var brush = new System.Drawing.Drawing2D.PathGradientBrush(path)) {
+                brush.CenterColor = Color.FromArgb(Math.Max(0,Math.Min(255,alpha)),shade,shade,shade);
+                brush.SurroundColors = new Color[] { Color.FromArgb(0,shade,shade,shade) };
+                g.FillPath(brush,path);
+            }
         }
     }
     protected override void Dispose(bool disposing) {
-        if (disposing) animation.Dispose();
+        if (disposing) { animation.Dispose(); throwSound.Close(); burstSound.Close(); frame.Dispose(); }
         base.Dispose(disposing);
     }
 }
+
 
 public class ClickMarker : Form {
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
@@ -92,11 +156,13 @@ public class ClickMarker : Form {
     int weapon = 1;
     readonly bool[] selectionDown = new bool[4];
     readonly List<GrenadeEffect> effects = new List<GrenadeEffect>();
+    readonly string audioDirectory;
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
         get { var p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80; return p; }
     }
     public ClickMarker(string soundPath) {
+        audioDirectory = System.IO.Path.GetDirectoryName(soundPath);
         for (int i = 0; i < 32; i++) {
             var voice = new Voice();
             voice.Player.Volume = 0.65;
@@ -168,8 +234,8 @@ public class ClickMarker : Form {
         }
         effects.RemoveAll(effect => effect.IsDisposed);
         if (weapon == 3 && effects.Exists(effect => effect.IsFlash)) return;
-        if (effects.Count >= 8) { effects[0].Close(); effects.RemoveAt(0); }
-        var grenade = new GrenadeEffect(Screen.FromPoint(click).Bounds, click, weapon == 3);
+        if (effects.Count >= 4) { effects[0].Close(); effects.RemoveAt(0); }
+        var grenade = new GrenadeEffect(Screen.FromPoint(click).Bounds, click, weapon == 3, audioDirectory);
         effects.Add(grenade);
         grenade.Show();
     }
@@ -253,3 +319,4 @@ public class ClickMarker : Form {
 '@
 Add-Type -TypeDefinition $source -ReferencedAssemblies System.Windows.Forms,System.Drawing,PresentationCore,WindowsBase
 [ClickMarker]::Run((Join-Path $PSScriptRoot 'mlg-sniper.mp3'))
+

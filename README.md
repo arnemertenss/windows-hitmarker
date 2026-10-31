@@ -22,13 +22,13 @@ Beenden: Rechtsklick auf das Symbol im Windows-Infobereich → **Hitmarker beend
 
 Die Auswahl ist auch über das Symbol im Infobereich möglich. Die Zahlentasten gelten global und werden weiterhin an das aktive Programm weitergegeben. Die aktuelle Auswahl steht im Tooltip des Symbols.
 
-Granaten fliegen in etwa 0,45 Sekunden zum Klickpunkt. Rauch löst sich nach insgesamt 5 Sekunden auf. Die Flashbang zeigt eine warme, halbtransparente Aufhellung des betroffenen Monitors, die nach insgesamt 1,7 Sekunden verschwindet. Laufende Flashbangs werden nicht gestapelt; bis zu 8 Granateneffekte sind gleichzeitig möglich. Alle Effekte lassen Mausklicks durch.
+Granaten fliegen rotierend zum Klickpunkt, prallen leicht auf und zünden nach etwa 0,85 Sekunden. Beim Wurf und bei der Zündung werden getrennte Sounds gespielt. Rauch wächst als bewegte Wolke mit echter Transparenz und weichen Rändern, hält an und löst sich nach insgesamt 9 Sekunden auf. Die Flashbang blendet einmal kurz auf und klingt über etwa 3 Sekunden ab. Laufende Flashbangs werden nicht gestapelt; bis zu 4 Granateneffekte sind gleichzeitig möglich. Alle Effekte lassen Mausklicks durch. Esc entfernt auch laufende Granatensounds.
 
-Es sind Desktop-Effekte, keine Integration in Counter-Strike. Die Granaten verwenden keine originalen Counter-Strike-Sounds.
+Es sind Desktop-Effekte, keine Integration in Counter-Strike. Die Granaten verwenden Clips, die von SoundDino als CS:GO-Sounds angeboten werden; die Herkunft aus den Original-Spieldateien wurde nicht unabhängig bestätigt.
 
 ## Voraussetzungen
 - Windows 10 oder 11 mit Windows PowerShell 5.1 und .NET Framework/WPF.
-- Alle drei Dateien müssen im selben Ordner liegen: `Hitmarker.ps1`, `Hitmarker-starten.cmd` und `mlg-sniper.mp3`.
+- Alle Dateien aus dem ZIP müssen zusammenbleiben: Startdatei, PowerShell-Skript sowie `mlg-sniper.mp3`, `csgo-throw.mp3`, `csgo-smoke.mp3` und `csgo-flashbang.mp3`.
 - Keine Installation und keine Administratorrechte erforderlich.
 
 ## Verhalten und Anpassung
@@ -44,9 +44,13 @@ Es sind Desktop-Effekte, keine Integration in Counter-Strike. Die Granaten verwe
 ## Grenzen
 Exklusives Vollbild, der Windows-Sicherheitsdesktop und manche geschützten Fenster können das Overlay verdecken. Sehr kurze Klicks können durch die Abfrage im Abstand von 10 ms übersehen werden. Kein Autostart.
 
-## Soundquelle
+## Soundquellen
 Der mitgelieferte Clip wird als [B2Q – MLG Sniper auf InstantsButton](https://instantsbutton.com/sound/b2q-mlg-sniper) angeboten.
-Die Zuordnung zu einer konkreten Call-of-Duty-Version wurde nicht verifiziert. Der Sound ist ein Drittanbieter-Inhalt; dieses Projekt beansprucht daran keine Rechte und erteilt keine eigene Lizenz dafür. Kein offizielles Call-of-Duty-Projekt.
+Die Zuordnung zu einer konkreten Call-of-Duty-Version wurde nicht verifiziert. Der Sound ist ein Drittanbieter-Inhalt; dieses Projekt beansprucht daran keine Rechte und erteilt keine eigene Lizenz dafür. Kein offizielles Call-of-Duty- oder Counter-Strike-Projekt.
+
+Wurf-, Rauch- und Flashbang-Sounds: [SoundDino – Counter-Strike](https://sounddino.com/en/effects/counter-strike/). Die heruntergeladenen Clips sind Drittanbieter-Inhalte und werden von diesem Projekt nicht neu lizenziert.
 
 ## Prüfung
 C#-Kompilierung und Erstellen/Freigeben des Overlay-Fensters unter Windows PowerShell 5.1 wurden geprüft. Zusätzlich wurde geprüft, dass zwei schnelle Klicks zwei unabhängige Audio-Player belegen. Scope-Maske, transparente Linse, Fadenkreuz am Mausziel und Beschneidung am Monitorrand wurden mit gerenderten Bildern geprüft. Zusätzlich geprüft: Waffenwahl, Rauch-/Flash-Zuordnung, Begrenzung gleichzeitiger Flashbangs, Entfernen der Effekte und Sniper-Schüsse. Keine automatisierte Prüfung der hörbaren Ausgabe oder der Darstellung über anderen Programmen.
+
+Die neue Granatendarstellung wurde auf Alpha-Transparenz und Flash-Abklingen geprüft; alle drei CS:GO-Audioclips wurden mit dem Windows-Mediadecoder geladen und ihre Spieldauer geprüft.
