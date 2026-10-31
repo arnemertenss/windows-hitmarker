@@ -23,6 +23,8 @@ public class ClickMarker : Form {
     }
     readonly List<Voice> voices = new List<Voice>();
     bool wasDown;
+    bool scoped;
+    Rectangle scopeScreen;
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
         get { var p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80; return p; }
@@ -52,11 +54,23 @@ public class ClickMarker : Form {
         tray.Visible = true;
         timer.Interval = 10;
         timer.Tick += delegate {
+            bool rightDown = (GetAsyncKeyState(2) & 0x8000) != 0;
+            if (rightDown && !scoped) {
+                Point cursor;
+                if (GetCursorPos(out cursor)) {
+                    scopeScreen = Screen.FromPoint(cursor).Bounds;
+                    scopeScreen.Offset(-Left, -Top);
+                }
+            }
+            scoped = rightDown;
             bool down = (GetAsyncKeyState(1) & 0x8000) != 0;
             if (down && !wasDown) {
                 PlaySound();
                 Point p;
-                if (GetCursorPos(out p)) marks.Add(new Mark { Point = new Point(p.X - Left, p.Y - Top), Time = DateTime.UtcNow });
+                if (GetCursorPos(out p)) marks.Add(new Mark {
+                    Point = scoped ? new Point(scopeScreen.Left + scopeScreen.Width / 2, scopeScreen.Top + scopeScreen.Height / 2) : new Point(p.X - Left, p.Y - Top),
+                    Time = DateTime.UtcNow
+                });
             }
             wasDown = down;
             marks.RemoveAll(m => (DateTime.UtcNow - m.Time).TotalMilliseconds > 160);
@@ -76,9 +90,33 @@ public class ClickMarker : Form {
         // Keep existing sounds playing if all 32 voices are occupied.
     }
     void SystemEventsHook() { Microsoft.Win32.SystemEvents.DisplaySettingsChanged += DisplayChanged; }
-    void DisplayChanged(object sender, EventArgs e) { Bounds = SystemInformation.VirtualScreen; }
+    void DisplayChanged(object sender, EventArgs e) { Bounds = SystemInformation.VirtualScreen; scoped = false; }
+    void DrawScope(Graphics graphics, Rectangle screen) {
+        int cx = screen.Left + screen.Width / 2;
+        int cy = screen.Top + screen.Height / 2;
+        int radius = Math.Max(1, Math.Min(screen.Width, screen.Height) * 40 / 100);
+        var lens = new Rectangle(cx - radius, cy - radius, radius * 2, radius * 2);
+        using (var mask = new System.Drawing.Drawing2D.GraphicsPath(System.Drawing.Drawing2D.FillMode.Alternate)) {
+            mask.AddRectangle(screen);
+            mask.AddEllipse(lens);
+            graphics.FillPath(Brushes.Black, mask);
+        }
+        using (var rim = new Pen(Color.FromArgb(40, 40, 40), 6))
+        using (var reticle = new Pen(Color.Black, 2)) {
+            graphics.DrawEllipse(rim, lens);
+            graphics.DrawLine(reticle, cx - radius, cy, cx + radius, cy);
+            graphics.DrawLine(reticle, cx, cy - radius, cx, cy + radius);
+            for (int i = -3; i <= 3; i++) {
+                if (i == 0) continue;
+                int offset = i * radius / 5;
+                graphics.DrawLine(reticle, cx + offset, cy - 5, cx + offset, cy + 5);
+                graphics.DrawLine(reticle, cx - 5, cy + offset, cx + 5, cy + offset);
+            }
+        }
+    }
     protected override void OnPaint(PaintEventArgs e) {
         base.OnPaint(e);
+        if (scoped) DrawScope(e.Graphics, scopeScreen);
         foreach (var m in marks) {
             int x = m.Point.X, y = m.Point.Y;
             using (var shadow = new Pen(Color.FromArgb(35,35,35), 5))
