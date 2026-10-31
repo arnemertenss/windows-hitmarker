@@ -9,6 +9,69 @@ using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
 
+public class GrenadeEffect : Form {
+    readonly Timer animation = new Timer();
+    readonly DateTime started = DateTime.UtcNow;
+    readonly Point target;
+    readonly bool flash;
+    public bool IsFlash { get { return flash; } }
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams {
+        get { var p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80; return p; }
+    }
+    public GrenadeEffect(Rectangle monitor, Point click, bool isFlash) {
+        flash = isFlash;
+        target = new Point(click.X - monitor.Left, click.Y - monitor.Top);
+        FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.Manual;
+        Bounds = monitor;
+        ShowInTaskbar = false;
+        TopMost = true;
+        BackColor = Color.Magenta;
+        TransparencyKey = Color.Magenta;
+        DoubleBuffered = true;
+        Opacity = 0.7;
+        animation.Interval = 16;
+        animation.Tick += delegate {
+            double age = (DateTime.UtcNow - started).TotalSeconds;
+            double lifetime = flash ? 1.7 : 5.0;
+            if (age >= lifetime) { Close(); return; }
+            if (age >= 0.45) {
+                double remaining = (lifetime - age) / (lifetime - 0.45);
+                Opacity = flash ? 0.45 * remaining * remaining : 0.7 * Math.Min(1, remaining * 3);
+            }
+            Invalidate();
+        };
+        animation.Start();
+    }
+    protected override void OnPaint(PaintEventArgs e) {
+        base.OnPaint(e);
+        double age = (DateTime.UtcNow - started).TotalSeconds;
+        if (age < 0.45) {
+            double progress = age / 0.45;
+            int x = (int)(ClientSize.Width / 2 + (target.X - ClientSize.Width / 2) * progress);
+            int y = (int)(ClientSize.Height + (target.Y - ClientSize.Height) * progress - Math.Sin(progress * Math.PI) * 140);
+            using (var brush = new SolidBrush(flash ? Color.Bisque : Color.OliveDrab)) e.Graphics.FillEllipse(brush, x-7, y-10, 14, 20);
+            return;
+        }
+        if (flash) { e.Graphics.Clear(Color.FromArgb(255, 246, 220)); return; }
+        double expansion = Math.Min(1, (age - 0.45) / 0.65);
+        for (int i = 0; i < 22; i++) {
+            double angle = i * 2.39996;
+            double distance = Math.Sqrt(i / 22.0) * 120 * expansion;
+            int size = (int)(95 + 35 * expansion + Math.Sin(age * 2 + i) * 8);
+            int x = target.X + (int)(Math.Cos(angle) * distance);
+            int y = target.Y + (int)(Math.Sin(angle) * distance - (age - 0.45) * 10);
+            int shade = 100 + (i * 17) % 60;
+            using (var brush = new SolidBrush(Color.FromArgb(shade, shade, shade))) e.Graphics.FillEllipse(brush, x-size/2, y-size/2, size, size);
+        }
+    }
+    protected override void Dispose(bool disposing) {
+        if (disposing) animation.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
 public class ClickMarker : Form {
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
@@ -26,6 +89,9 @@ public class ClickMarker : Form {
     bool scoped;
     Rectangle scopeScreen;
     Point scopeAim;
+    int weapon = 1;
+    readonly bool[] selectionDown = new bool[4];
+    readonly List<GrenadeEffect> effects = new List<GrenadeEffect>();
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
         get { var p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80; return p; }
@@ -48,14 +114,25 @@ public class ClickMarker : Form {
         TopMost = true;
         DoubleBuffered = true;
         var menu = new ContextMenuStrip();
+        menu.Items.Add("1 - Sniper", null, delegate { SelectWeapon(1); });
+        menu.Items.Add("2 - Rauchgranate", null, delegate { SelectWeapon(2); });
+        menu.Items.Add("3 - Flashbang", null, delegate { SelectWeapon(3); });
+        menu.Items.Add("Effekte entfernen (Esc)", null, delegate { ClearEffects(); });
         menu.Items.Add("Hitmarker beenden", null, delegate { Close(); });
         tray.Icon = SystemIcons.Application;
-        tray.Text = "Hitmarker (Rechtsklick zum Beenden)";
+        tray.Text = "Hitmarker: Sniper | 1/2/3 wechseln";
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
         timer.Interval = 10;
         timer.Tick += delegate {
-            bool rightDown = (GetAsyncKeyState(2) & 0x8000) != 0;
+            for (int key = 1; key <= 3; key++) {
+                bool pressed = (GetAsyncKeyState(0x30 + key) & 0x8000) != 0;
+                if (pressed && !selectionDown[key]) SelectWeapon(key);
+                selectionDown[key] = pressed;
+            }
+            if ((GetAsyncKeyState(0x1B) & 0x8000) != 0) ClearEffects();
+            effects.RemoveAll(effect => effect.IsDisposed);
+            bool rightDown = weapon == 1 && (GetAsyncKeyState(2) & 0x8000) != 0;
             if (rightDown) {
                 Point cursor;
                 if (GetCursorPos(out cursor)) {
@@ -67,12 +144,8 @@ public class ClickMarker : Form {
             scoped = rightDown;
             bool down = (GetAsyncKeyState(1) & 0x8000) != 0;
             if (down && !wasDown) {
-                PlaySound();
                 Point p;
-                if (GetCursorPos(out p)) marks.Add(new Mark {
-                    Point = new Point(p.X - Left, p.Y - Top),
-                    Time = DateTime.UtcNow
-                });
+                if (GetCursorPos(out p)) Fire(p);
             }
             wasDown = down;
             marks.RemoveAll(m => (DateTime.UtcNow - m.Time).TotalMilliseconds > 160);
@@ -80,6 +153,29 @@ public class ClickMarker : Form {
         };
         SystemEventsHook();
         timer.Start();
+    }
+    void SelectWeapon(int value) {
+        weapon = value;
+        scoped = false;
+        string name = value == 1 ? "Sniper" : value == 2 ? "Rauchgranate" : "Flashbang";
+        tray.Text = "Hitmarker: " + name + " | 1/2/3 wechseln";
+    }
+    void Fire(Point click) {
+        if (weapon == 1) {
+            PlaySound();
+            marks.Add(new Mark { Point = new Point(click.X - Left, click.Y - Top), Time = DateTime.UtcNow });
+            return;
+        }
+        effects.RemoveAll(effect => effect.IsDisposed);
+        if (weapon == 3 && effects.Exists(effect => effect.IsFlash)) return;
+        if (effects.Count >= 8) { effects[0].Close(); effects.RemoveAt(0); }
+        var grenade = new GrenadeEffect(Screen.FromPoint(click).Bounds, click, weapon == 3);
+        effects.Add(grenade);
+        grenade.Show();
+    }
+    void ClearEffects() {
+        foreach (var effect in effects) effect.Close();
+        effects.Clear();
     }
     void PlaySound() {
         foreach (var voice in voices) {
@@ -137,6 +233,7 @@ public class ClickMarker : Form {
     protected override void Dispose(bool disposing) {
         if (disposing) {
             timer.Dispose();
+            ClearEffects();
             foreach (var voice in voices) voice.Player.Close();
             tray.Visible = false; tray.Dispose();
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= DisplayChanged;
