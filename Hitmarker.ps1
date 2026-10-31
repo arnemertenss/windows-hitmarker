@@ -17,16 +17,25 @@ public class ClickMarker : Form {
     readonly List<Mark> marks = new List<Mark>();
     readonly Timer timer = new Timer();
     readonly NotifyIcon tray = new NotifyIcon();
-    readonly System.Windows.Media.MediaPlayer sound;
+    private class Voice {
+        public readonly System.Windows.Media.MediaPlayer Player = new System.Windows.Media.MediaPlayer();
+        public bool Busy;
+    }
+    readonly List<Voice> voices = new List<Voice>();
     bool wasDown;
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
         get { var p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80; return p; }
     }
     public ClickMarker(string soundPath) {
-        sound = new System.Windows.Media.MediaPlayer();
-        sound.Volume = 0.65;
-        sound.Open(new Uri(soundPath));
+        for (int i = 0; i < 32; i++) {
+            var voice = new Voice();
+            voice.Player.Volume = 0.65;
+            voice.Player.MediaEnded += delegate { voice.Busy = false; };
+            voice.Player.MediaFailed += delegate { voice.Busy = false; };
+            voice.Player.Open(new Uri(soundPath));
+            voices.Add(voice);
+        }
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
@@ -45,8 +54,7 @@ public class ClickMarker : Form {
         timer.Tick += delegate {
             bool down = (GetAsyncKeyState(1) & 0x8000) != 0;
             if (down && !wasDown) {
-                sound.Position = TimeSpan.Zero;
-                sound.Play();
+                PlaySound();
                 Point p;
                 if (GetCursorPos(out p)) marks.Add(new Mark { Point = new Point(p.X - Left, p.Y - Top), Time = DateTime.UtcNow });
             }
@@ -56,6 +64,16 @@ public class ClickMarker : Form {
         };
         SystemEventsHook();
         timer.Start();
+    }
+    void PlaySound() {
+        foreach (var voice in voices) {
+            if (voice.Busy) continue;
+            voice.Busy = true;
+            voice.Player.Position = TimeSpan.Zero;
+            voice.Player.Play();
+            return;
+        }
+        // Keep existing sounds playing if all 32 voices are occupied.
     }
     void SystemEventsHook() { Microsoft.Win32.SystemEvents.DisplaySettingsChanged += DisplayChanged; }
     void DisplayChanged(object sender, EventArgs e) { Bounds = SystemInformation.VirtualScreen; }
@@ -75,7 +93,9 @@ public class ClickMarker : Form {
     }
     protected override void Dispose(bool disposing) {
         if (disposing) {
-            timer.Dispose(); sound.Close(); tray.Visible = false; tray.Dispose();
+            timer.Dispose();
+            foreach (var voice in voices) voice.Player.Close();
+            tray.Visible = false; tray.Dispose();
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= DisplayChanged;
         }
         base.Dispose(disposing);
