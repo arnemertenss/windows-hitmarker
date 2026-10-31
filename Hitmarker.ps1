@@ -25,6 +25,7 @@ public class ClickMarker : Form {
     bool wasDown;
     bool scoped;
     Rectangle scopeScreen;
+    Point scopeAim;
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
         get { var p = base.CreateParams; p.ExStyle |= 0x80000 | 0x20 | 0x08000000 | 0x80; return p; }
@@ -55,11 +56,12 @@ public class ClickMarker : Form {
         timer.Interval = 10;
         timer.Tick += delegate {
             bool rightDown = (GetAsyncKeyState(2) & 0x8000) != 0;
-            if (rightDown && !scoped) {
+            if (rightDown) {
                 Point cursor;
                 if (GetCursorPos(out cursor)) {
                     scopeScreen = Screen.FromPoint(cursor).Bounds;
                     scopeScreen.Offset(-Left, -Top);
+                    scopeAim = new Point(cursor.X - Left, cursor.Y - Top);
                 }
             }
             scoped = rightDown;
@@ -68,7 +70,7 @@ public class ClickMarker : Form {
                 PlaySound();
                 Point p;
                 if (GetCursorPos(out p)) marks.Add(new Mark {
-                    Point = scoped ? new Point(scopeScreen.Left + scopeScreen.Width / 2, scopeScreen.Top + scopeScreen.Height / 2) : new Point(p.X - Left, p.Y - Top),
+                    Point = new Point(p.X - Left, p.Y - Top),
                     Time = DateTime.UtcNow
                 });
             }
@@ -91,9 +93,11 @@ public class ClickMarker : Form {
     }
     void SystemEventsHook() { Microsoft.Win32.SystemEvents.DisplaySettingsChanged += DisplayChanged; }
     void DisplayChanged(object sender, EventArgs e) { Bounds = SystemInformation.VirtualScreen; scoped = false; }
-    void DrawScope(Graphics graphics, Rectangle screen) {
-        int cx = screen.Left + screen.Width / 2;
-        int cy = screen.Top + screen.Height / 2;
+    void DrawScope(Graphics graphics, Rectangle screen, Point aim) {
+        int cx = aim.X;
+        int cy = aim.Y;
+        var savedState = graphics.Save();
+        graphics.SetClip(screen);
         int radius = Math.Max(1, Math.Min(screen.Width, screen.Height) * 40 / 100);
         var lens = new Rectangle(cx - radius, cy - radius, radius * 2, radius * 2);
         using (var mask = new System.Drawing.Drawing2D.GraphicsPath(System.Drawing.Drawing2D.FillMode.Alternate)) {
@@ -113,10 +117,11 @@ public class ClickMarker : Form {
                 graphics.DrawLine(reticle, cx - 5, cy + offset, cx + 5, cy + offset);
             }
         }
+        graphics.Restore(savedState);
     }
     protected override void OnPaint(PaintEventArgs e) {
         base.OnPaint(e);
-        if (scoped) DrawScope(e.Graphics, scopeScreen);
+        if (scoped) DrawScope(e.Graphics, scopeScreen, scopeAim);
         foreach (var m in marks) {
             int x = m.Point.X, y = m.Point.Y;
             using (var shadow = new Pen(Color.FromArgb(35,35,35), 5))
